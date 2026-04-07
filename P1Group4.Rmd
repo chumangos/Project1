@@ -1,0 +1,285 @@
+---
+title: "CSIT165 Initiative, Global Health Union (GHU) and Private Diagnostic Laboratories (PDL)."
+author: "Haidee Hangis"
+date: "2026-04-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r load-shape-merge, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Load libraries
+library(tidyr)
+library(dplyr)
+
+# Load data
+confirmed  <- read.csv("time_series_covid19_confirmed_global.csv")
+deaths     <- read.csv("time_series_covid19_deaths_global.csv")
+recovered  <- read.csv("time_series_covid19_recovered_global.csv")
+
+# Reshape
+confirmed_long <- pivot_longer(confirmed, cols = starts_with("X"),
+                               names_to = "date", values_to = "confirmed")
+
+deaths_long <- pivot_longer(deaths, cols = starts_with("X"),
+                            names_to = "date", values_to = "deaths")
+
+recovered_long <- pivot_longer(recovered, cols = starts_with("X"),
+                               names_to = "date", values_to = "recovered")
+
+# Merge the three data sets into one
+merged <- left_join(confirmed_long, deaths_long,
+                    by = c("Province.State", "Country.Region", "Lat", "Long", "date"))
+
+merged <- left_join(merged, recovered_long,
+                    by = c("Province.State", "Country.Region", "Lat", "Long", "date"))
+
+# Fix date
+merged$date <- as.Date(gsub("X", "", merged$date), format = "%m.%d.%y")
+
+```
+
+## Objective 1. Origin of Covid-19 
+>
+Based on the maximum number of confirmed cases and deaths on the first recorded day in the dataset, China is the country of origin for Covid-19. China had 444 confirmed cases and 17 deaths registered in 2020-01-22. Being Hubei China a densely populated place is not surprise why the virus spread so rapidly in its early stages.
+>
+
+```{r}
+first_day <- min(merged$date) #identifying the first recorded day in my merged dataset
+first_day
+first_day_data <- merged[merged$date == first_day, ] #filtering only the first day
+max_confirm <- first_day_data[which.max(first_day_data$confirmed), ] # find the location with the most confirmed cases
+max_confirm
+max_deaths <- first_day_data[which.max(first_day_data$deaths), ] # find the location with the most confirmed deaths
+max_deaths
+#Comparing the country with the most confirmed cases and the country with the most deaths
+if (max_confirm$Country.Region == max_deaths$Country.Region) {
+  #origin <- max_confirm$Country.Region
+  origin <- max_confirm
+  print(paste("Predicted origin of COVID-19 is:", origin))
+} else {
+  origin <- max_confirm
+  print("Confirmed and death origins do not match.")
+}
+origin
+```
+
+## Objetive 2. Most recent area with a first confirmed case
+>
+After putting aside all places with previous confirmed cases, the Province Pitcairn Islands in United Kingdom is the last region to report its first confirmed case in 2022-07-20.This happened two years and six months after the first case was confirmed in China.
+>
+
+```{r}
+
+# Get all unique locations
+locations <- unique(merged[, c("Country.Region", "Province.State")])
+
+# Create empty results data frame
+first_cases <- data.frame(
+  Country = character(),
+  Province = character(),
+  Lat = numeric(),
+  Long = numeric(),
+  FirstCaseDate = as.Date(character())
+)
+
+# Loop through each location
+for (i in 1:nrow(locations)) {
+  
+  country <- locations$Country.Region[i]
+  province <- locations$Province.State[i]
+  
+  # Subset for this location
+  subset_data <- merged[merged$Country.Region == country &
+                        merged$Province.State == province, ]
+  
+  # Days with confirmed > 0
+  positive_days <- subset_data[subset_data$confirmed > 0, ]
+  
+  # If this location ever had a case
+  if (nrow(positive_days) > 0) {
+    
+    first_date <- min(positive_days$date)
+    
+    # Extract coordinates from the FIRST row of subset_data
+    lat_val <- subset_data$Lat[1]
+    long_val <- subset_data$Long[1]
+    
+    # Add row to results
+    first_cases <- rbind(
+      first_cases,
+      data.frame(
+        Country = country,
+        Province = province,
+        Lat = lat_val,
+        Long = long_val,
+        FirstCaseDate = first_date
+      )
+    )
+  }
+}
+
+# Find the most recent first-case date
+latest_date <- max(first_cases$FirstCaseDate)
+
+# Extract the most recent location (one-row data frame)
+most_recent_location <- first_cases[first_cases$FirstCaseDate == latest_date, ]
+
+# Define 'recent' for Question 3
+recent <- most_recent_location
+recent
+
+```
+
+## Objective 3. How far away are the areas from objective 2 from where the first confirmed case(s) occurred
+>
+Pitcairn Islands in United Kingdom is 8746.97 miles away from Hubei, China where the first confirmed cases ocurred. The long distance between Hubei, China and Pitcairn Islands offers a logical explanation of why it took more than two years for the virus to spread onto this remote and more isolated place in the sense of its traveling connections are more limited.
+>
+
+```{r}
+# Load geosphere
+library(geosphere)
+
+# Check that origin exists and is a data frame
+if (!exists("origin") || !is.data.frame(origin) || nrow(origin) != 1) {
+  stop("Error: 'origin' must be a one-row data frame created in Question 1.")
+}
+
+# Check that recent exists and is a data frame
+if (!exists("recent") || !is.data.frame(recent) || nrow(recent) != 1) {
+  stop("Error: 'recent' must be a one-row data frame created in Question 2.")
+}
+
+# Check that coordinates exist
+if (is.null(origin$Lat) || is.null(origin$Long)) {
+  stop("Error: origin does not contain Lat/Long columns.")
+}
+
+if (is.null(recent$Lat) || is.null(recent$Long)) {
+  stop("Error: recent does not contain Lat/Long columns.")
+}
+
+# --- EXTRACT COORDINATES ---------------------------------------------------
+
+origin_coords <- c(origin$Long, origin$Lat)
+recent_coords <- c(recent$Long, recent$Lat)
+
+# --- DISTANCE CALCULATION --------------------------------------------------
+
+# Distance in meters
+distance_meters <- distm(origin_coords, recent_coords)
+
+# Convert meters to miles
+distance_miles <- distance_meters * 0.000621371
+
+# --- BUILD REGION NAMES ----------------------------------------------------
+
+recent_region <- paste(recent$Province, recent$Country, sep = ", ")
+origin_region <- paste(origin$Province.State, origin$Country.Region, sep = ", ")
+
+# --- PRINT RESULT ----------------------------------------------------------
+
+cat(recent_region, "is", round(distance_miles, 2),
+    "miles away from", origin_region, "\n")
+
+```
+## Objective 4. Caracterizing diseases using risk scores.
+>
+The lowest‑risk area Jiansu, China has a very small ratio of deaths to confirmed cases, meaning outcomes there are relatively better.
+The highest‑risk area North Korea has a much larger proportion of deaths relative to confirmed cases, indicating worse outcomes.
+The global risk score 1.0073 provides a baseline for comparison.
+>
+
+```{r}
+clean_data <- merged[!is.na(merged$Lat) & merged$Lat != 0 &
+                     !is.na(merged$Long) & merged$Long != 0, ]
+latest_day <- max(clean_data$date)
+latest_data <- clean_data[clean_data$date == latest_day, ]
+latest_data$risk_score <- ifelse(
+  latest_data$confirmed > 0,
+  100 * (latest_data$deaths / latest_data$confirmed),
+  NA
+)
+min_risk <- min(latest_data$risk_score, na.rm = TRUE)
+
+lowest_risk_data <- latest_data[latest_data$risk_score == min_risk, ]
+
+# Break ties by choosing the one with most confirmations
+lowest_risk <- lowest_risk_data[which.max(lowest_risk_data$confirmed), ]
+max_risk <- max(latest_data$risk_score, na.rm = TRUE)
+
+highest_risk_data <- latest_data[latest_data$risk_score == max_risk, ]
+
+# Break ties by choosing the one with most confirmations
+highest_risk <- highest_risk_data[which.max(highest_risk_data$confirmed), ]
+global_confirmed <- sum(latest_data$confirmed, na.rm = TRUE)
+global_deaths <- sum(latest_data$deaths, na.rm = TRUE)
+
+global_risk <- 100 * (global_deaths / global_confirmed)
+cat("Lowest-risk area:", lowest_risk$Province.State, ",", lowest_risk$Country.Region,
+    "with risk score =", round(lowest_risk$risk_score, 4), "\n")
+
+cat("Highest-risk area:", highest_risk$Province.State, ",", highest_risk$Country.Region,
+    "with risk score =", round(highest_risk$risk_score, 4), "\n")
+
+cat("Global risk score =", round(global_risk, 4), "\n")
+
+```
+
+## Objective 5. Two tables with the top 5 countries that have the most COVID-19 related confirmations and and deaths.
+>
+The tables below show that the top 5 countries with most covid-19 confirmed cases are:
+>
+1. USA
+2. India
+3. Brazil
+4. France
+5. Germany
+>
+And the top 5 countries with most covid-19 Deaths are:
+>
+1. USA
+2. Brazil
+3. India
+4. Mexico
+5. Russia
+>
+The first three countries in the list with most Covid-19 deaths have a correlation with the list of countries with most confirmed cases.
+>
+
+```{r}
+countries <- unique(merged$Country.Region)
+country_confirmations <- c()
+country_deaths <- c()
+for (c in countries) {
+  
+  # subset for this country
+  subset_data <- merged[merged$Country.Region == c, ]
+  
+  # sum all confirmations and deaths
+  total_confirmed <- sum(subset_data$confirmed, na.rm = TRUE)
+  total_deaths <- sum(subset_data$deaths, na.rm = TRUE)
+  
+  # store results
+  country_confirmations[c] <- total_confirmed
+  country_deaths[c] <- total_deaths
+}
+confirm_df <- data.frame(
+  Country = names(country_confirmations),
+  Confirmations = as.numeric(country_confirmations)
+)
+
+deaths_df <- data.frame(
+  Country = names(country_deaths),
+  Deaths = as.numeric(country_deaths)
+)
+top5_confirm <- confirm_df[order(-confirm_df$Confirmations), ][1:5, ]
+top5_deaths <- deaths_df[order(-deaths_df$Deaths), ][1:5, ]
+library(knitr)
+kable(top5_confirm, caption = "Top 5 Countries by Confirmations")
+kable(top5_deaths, caption = "Top 5 Countries by Deaths")
+
+```
+
